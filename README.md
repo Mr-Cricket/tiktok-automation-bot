@@ -63,7 +63,7 @@ Install all the required Python packages from the `requirements.txt` file. This 
 ## ▶️ Usage
 **1. Configure Your Settings:**
 
-Open the `config.py` file and customize the settings to your liking:
+Before running the bot, you can customize its behavior by editing the `config.py` file. You can open this file with any text editor, like Notepad or VS Code. You will be able to change and adjust:
 
 * `DISCORD_LINKS`: This is important! Replace the placeholder links with your own permanent Discord server invites. The bot will randomly pick from this list.
 
