@@ -267,7 +267,7 @@ class TikTokAutomator:
         try:
             for char in final_comment:
                 comment_area.send_keys(char)
-                time.sleep(random.uniform(0.04, 0.1)) # Slightly slower, more human typing
+                time.sleep(random.uniform(0.02, 0.08))
         except Exception as e:
             logging.error(f"Failed to type comment: {e}")
             return False
@@ -277,121 +277,76 @@ class TikTokAutomator:
         if self._safe_click(post_button, "comment post button"):
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
-            time.sleep(1.5)
+            time.sleep(1.2)
             self._close_comment_sidebar()
             return True
         return False
 
-    def _navigate_to_next_video(self, article_index):
-        """Navigates to the next video using multiple scrolling and verification methods."""
+    def _navigate_to_next_video(self):
+        """Navigates to the next video using the simple, reliable PAGE_DOWN method."""
         logging.info("Scrolling to next video...")
-        
         try:
-            self.driver.find_element(By.TAG_NAME, 'body').click()
-            logging.debug("Clicked body to reset focus.")
-        except Exception as e:
-            logging.warning(f"Could not click body to reset focus: {e}")
-
-        # --- Primary Method: JavaScript Scroll ---
-        try:
-            logging.debug("Attempting primary scroll method (JavaScript)...")
-            self.driver.execute_script("window.scrollBy(0, window.innerHeight);")
-            time.sleep(2.0) # Increased static pause for the DOM to settle
-            
-            # Use explicit wait to confirm the next video element is loaded
-            next_video_xpath = f'//*[@id="column-list-container"]/article[{article_index + 1}]'
-            WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, next_video_xpath)))
-            
-            logging.info("New video loaded successfully (verified by next element).")
+            self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+            time.sleep(random.uniform(2.5, 4.0)) # A static pause to allow content to load
+            logging.info("Scrolled to next video.")
             return True
         except Exception as e:
-            logging.warning(f"Primary scroll method failed: {e}. Trying fallback...")
-        
-        # --- Fallback Method: PAGE_DOWN Key Press ---
-        try:
-            logging.debug("Attempting fallback scroll method (PAGE_DOWN)...")
-            self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
-            time.sleep(3.0) # Longer static pause for this less reliable method
-            
-            # Check if a new video appeared, even without the explicit wait
-            new_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
-            if new_count > article_index:
-                 logging.info("New video loaded successfully (verified by fallback).")
-                 return True
-            else:
-                 raise Exception("Video count did not increase after fallback scroll.")
-        except Exception as e_fallback:
-            logging.error(f"All scroll methods failed. Fallback error: {e_fallback}")
+            logging.error(f"Scrolling with PAGE_DOWN failed: {e}")
             return False
 
 
     def run(self, start_event):
-        """Main automation loop with self-healing for crashed sessions."""
-        first_run = True
-        article_num = 1
-        
-        while True: # Self-healing loop
-            try:
-                self._setup_driver()
-                self.driver.get("https://www.tiktok.com")
+        """Main automation loop."""
+        try:
+            self._setup_driver()
+            self.driver.get("https://www.tiktok.com")
+            
+            if self.headless:
+                if not self._check_login_status():
+                    logging.critical("Headless login failed. Please run in Setup Mode (Choice 1) to refresh your session.")
+                    return
+            
+            logging.info("Browser opened. Waiting for the master 'go' signal from the main console...")
+            start_event.wait()
+            logging.info("Go signal received! Starting automation.")
+            self._navigate_to_fyp()
+            
+            article_num = 1
+            while True:
+                logging.info(f"--- Processing video in article {article_num} ---")
                 
-                if self.headless:
-                    if not self._check_login_status():
-                        logging.critical("Headless login failed. Please run in Setup Mode (Choice 1) to refresh your session.")
-                        return # Exit this thread permanently
-                
-                if first_run:
-                    logging.info("Browser opened. Waiting for the user to press ENTER in the main console...")
-                    start_event.wait()
-                    first_run = False
-                
-                logging.info("Go signal received! Starting automation.")
-                self._navigate_to_fyp()
-                
-                while True: # Main interaction loop
-                    logging.info(f"--- Processing video in article {article_num} ---")
-                    
-                    try:
-                        WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
-                    except TimeoutException:
-                        logging.error("Timed out waiting for current video article to load. Stopping.")
-                        break # Exit interaction loop
+                try:
+                    WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
+                except TimeoutException:
+                    logging.error("Timed out waiting for current video article to load. Stopping.")
+                    break
 
-                    if self._check_if_sponsored(article_index=article_num):
-                        if not self._navigate_to_next_video(article_num):
-                            break
-                        article_num += 1
-                        continue
-
-                    liked = self._like_current_video(article_index=article_num)
-                    if liked: time.sleep(random.uniform(0.4, 0.8))
-                    
-                    if self._check_if_comments_disabled(article_index=article_num):
-                        logging.info("Skipping comment on this video.")
-                    else:
-                        if self._open_comment_sidebar(article_num):
-                            self._process_comment_input_and_post()
-                    
-                    if liked or not self.is_comment_sidebar_open:
-                        time.sleep(random.uniform(*self.config['DELAY_BETWEEN_ACTIONS']))
-                    
-                    if not self._navigate_to_next_video(article_num):
-                        break # Exit interaction loop
+                if self._check_if_sponsored(article_index=article_num):
+                    if not self._navigate_to_next_video():
+                        break
                     article_num += 1
-            
-            except InvalidSessionIdException:
-                logging.warning("Browser session crashed (InvalidSessionIdException). Attempting to restart in 15 seconds...")
-                self.close()
-                time.sleep(15)
-                continue # Go to the top of the self-healing loop to restart
+                    continue
 
-            except Exception as e:
-                logging.critical(f"An unrecoverable, non-session-crash error occurred: {e}", exc_info=True)
-                break # Break the self-healing loop for other critical errors
-            
-            break
+                liked = self._like_current_video(article_index=article_num)
+                if liked: time.sleep(random.uniform(0.4, 0.8))
+                
+                if self._check_if_comments_disabled(article_index=article_num):
+                    logging.info("Skipping comment on this video.")
+                else:
+                    if self._open_comment_sidebar(article_num):
+                        self._process_comment_input_and_post()
+                
+                if liked or not self.is_comment_sidebar_open:
+                    time.sleep(random.uniform(*self.config['DELAY_BETWEEN_ACTIONS']))
+                
+                if not self._navigate_to_next_video():
+                    break
+                article_num += 1
 
-        self.close()
+        except Exception as e:
+            logging.critical(f"An unrecoverable error occurred: {e}", exc_info=True)
+        finally:
+            self.close()
 
     def close(self):
         """Closes the browser."""
