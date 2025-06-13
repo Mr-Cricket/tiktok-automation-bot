@@ -34,6 +34,8 @@ class TikTokAutomator:
         self.is_comment_sidebar_open = False
         self.driver = None
         self.wait = None
+        # Store the last known article index to re-click the comment icon
+        self.last_article_index_for_comment = None 
 
     def _setup_driver(self):
         """Initializes the WebDriver for this specific instance."""
@@ -182,23 +184,35 @@ class TikTokAutomator:
             if comment_panel:
                 logging.info("Comment panel opened.")
                 self.is_comment_sidebar_open = True
+                self.last_article_index_for_comment = article_index # Store current article index
                 return True
         logging.warning("Could not open comment sidebar.")
         return False
 
     def _close_comment_sidebar(self):
-        """Closes the comment sidebar if it's open."""
+        """Closes the comment sidebar if it's open by re-clicking the comment icon."""
         if not self.is_comment_sidebar_open:
             return
-        logging.info("Attempting to close comment sidebar...")
-        try:
-            close_button = self._safe_find_element(By.XPATH, "//button[@aria-label='Close']", timeout=3)
-            if self._safe_click(close_button, "comment sidebar close button"):
-                self.is_comment_sidebar_open = False
-                time.sleep(1) # Wait for animation
-        except Exception as e:
-            logging.warning(f"Could not close comment sidebar, it might close on its own: {e}")
+        
+        if self.last_article_index_for_comment is None:
+            logging.warning("Cannot close comment sidebar: last_article_index_for_comment is not set.")
             self.is_comment_sidebar_open = False # Assume it's closed to avoid getting stuck
+            return
+
+        logging.info(f"Attempting to close comment sidebar by re-clicking the comment icon for article [{self.last_article_index_for_comment}]...")
+        try:
+            # Re-find the comment icon using the stored article index
+            comment_icon = self._safe_find_element(By.XPATH, f'//*[@id="column-list-container"]/article[{self.last_article_index_for_comment}]/div/section[2]/button[2]')
+            if self._safe_click(comment_icon, "comment icon to close sidebar"):
+                self.is_comment_sidebar_open = False
+                self.last_article_index_for_comment = None # Clear the stored index
+                time.sleep(1) # Wait for animation
+                logging.info("Comment sidebar closed successfully.")
+                return True
+        except Exception as e:
+            logging.warning(f"Could not re-click comment icon to close sidebar: {e}")
+            self.is_comment_sidebar_open = False # Assume it's closed to avoid getting stuck
+        return False
 
     def _humanize_comment(self, text):
         """Applies misspellings and slang to a comment to make it appear more human."""
@@ -233,7 +247,9 @@ class TikTokAutomator:
             logging.warning(f"Could not send ESCAPE key (this is often okay): {e}")
 
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
-        if not comment_area: return False
+        if not comment_area: 
+            logging.error("Comment input area not found.")
+            return False
         self._safe_click(comment_area, "comment input area")
         time.sleep(0.5)
 
@@ -278,7 +294,7 @@ class TikTokAutomator:
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
             time.sleep(1.2)
-            self._close_comment_sidebar()
+            self._close_comment_sidebar() # No need to pass article_index here; it's stored in self.last_article_index_for_comment
             return True
         return False
 
