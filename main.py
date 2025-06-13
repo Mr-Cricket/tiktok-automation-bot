@@ -158,23 +158,17 @@ class TikTokAutomator:
         words = text.split()
         new_words = []
         for word in words:
-            # Clean the word of punctuation to check it
             clean_word = word.strip(".,!?;:").lower()
-            
-            # --- Tier 1: Specific word swaps ---
             if clean_word in self.config['HUMANIZER_TWEAKS']:
-                if random.random() < 0.4: # 40% chance to apply a specific tweak
+                if random.random() < 0.4:
                     new_word = random.choice(self.config['HUMANIZER_TWEAKS'][clean_word])
-                    # Preserve original capitalization if it was capitalized
                     if word and word[0].isupper():
                         new_word = new_word.capitalize()
-                    new_words.append(new_word + word[len(clean_word):]) # Re-add punctuation
+                    new_words.append(new_word + word[len(clean_word):])
                     continue
             
-            # --- Tier 2: General u -> v swap ---
             if 'u' in clean_word and len(clean_word) > 2:
-                if random.random() < 0.15: # 15% chance to swap 'u' for 'v'
-                    # Replace only the first 'u' to be less aggressive
+                if random.random() < 0.15:
                     new_word = word.replace('u', 'v', 1).replace('U', 'V', 1)
                     new_words.append(new_word)
                     continue
@@ -184,47 +178,53 @@ class TikTokAutomator:
 
 
     def _process_comment_input_and_post(self):
-        """Builds, humanizes, and posts a random comment."""
+        """Builds, humanizes, validates, and posts a random comment."""
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
         if not comment_area: return False
         self._safe_click(comment_area, "comment input area")
         time.sleep(0.5)
 
-        # 1. Build the base advertisement
-        opener = random.choice(self.config['AD_OPENERS'])
-        cta = random.choice(self.config['CALL_TO_ACTIONS'])
-        link = random.choice(self.config['DISCORD_LINKS'])
-        base_comment = f"{opener} {cta} {link}"
+        # Loop to ensure the generated comment is within the character limit
+        final_comment = ""
+        for _ in range(10): # Try up to 10 times to generate a valid comment
+            opener = random.choice(self.config['AD_OPENERS'])
+            cta = random.choice(self.config['CALL_TO_ACTIONS'])
+            link = random.choice(self.config['DISCORD_LINKS'])
+            base_comment = f"{opener} {cta} {link}"
+            
+            humanized_comment = self._humanize_comment(base_comment)
+            
+            slang = random.choice(self.config['SLANG_ADDITIONS'])
+            emoji = random.choice(self.config['EMOJIS'])
+            
+            temp_comment = humanized_comment
+            if slang:
+                if random.random() < 0.5:
+                    temp_comment = f"{slang} {temp_comment}"
+                else:
+                    temp_comment = f"{temp_comment} {slang}"
+            
+            final_comment = f"{temp_comment} {emoji}".strip()
 
-        # 2. Apply humanizer tweaks (misspellings, slang)
-        humanized_comment = self._humanize_comment(base_comment)
-        
-        # 3. Add random slang and emojis
-        slang = random.choice(self.config['SLANG_ADDITIONS'])
-        emoji = random.choice(self.config['EMOJIS'])
-        
-        final_comment = humanized_comment
-        if slang:
-            # 50/50 chance to add slang at the beginning or end
-            if random.random() < 0.5:
-                final_comment = f"{slang} {final_comment}"
+            if len(final_comment) <= 150:
+                break # The comment is a valid length, so we can proceed
             else:
-                final_comment = f"{final_comment} {slang}"
-        
-        final_comment = f"{final_comment} {emoji}".strip()
-
+                logging.warning(f"Generated comment was too long ({len(final_comment)} chars). Retrying...")
+        else:
+            logging.error("Could not generate a comment under 150 characters after 10 attempts. Skipping.")
+            return False
 
         logging.info(f"Typing comment: '{final_comment}'")
         for char in final_comment:
             comment_area.send_keys(char)
-            time.sleep(random.uniform(0.03, 0.09))
-        time.sleep(0.7)
+            time.sleep(random.uniform(0.02, 0.08)) # Even faster typing
+        time.sleep(0.5)
 
         post_button = self._safe_find_element(By.CSS_SELECTOR, '[data-e2e="comment-post"]')
         if self._safe_click(post_button, "comment post button"):
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
-            time.sleep(1.5)
+            time.sleep(1.2) # Faster post-registration wait
             return True
         return False
 
@@ -270,7 +270,7 @@ class TikTokAutomator:
             article_num = 1
             while True:
                 logging.info(f"--- Processing video in article {article_num} ---")
-                time.sleep(random.uniform(0.8, 1.8))
+                time.sleep(random.uniform(0.7, 1.5)) # Faster pre-interaction delay
                 
                 try:
                     WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
@@ -279,7 +279,7 @@ class TikTokAutomator:
                     break
 
                 liked = self._like_current_video(article_index=article_num)
-                if liked: time.sleep(random.uniform(0.5, 1))
+                if liked: time.sleep(random.uniform(0.4, 0.8))
                 
                 if self._check_if_comments_disabled(article_index=article_num):
                     logging.info("Skipping comment on this video.")
