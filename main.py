@@ -9,7 +9,8 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
     ElementClickInterceptedException,
-    ElementNotInteractableException
+    ElementNotInteractableException,
+    WebDriverException
 )
 import undetected_chromedriver as uc
 import logging
@@ -159,6 +160,8 @@ class TikTokAutomator:
         new_words = []
         for word in words:
             clean_word = word.strip(".,!?;:").lower()
+            
+            # --- Tier 1: Specific word swaps ---
             if clean_word in self.config['HUMANIZER_TWEAKS']:
                 if random.random() < 0.4:
                     new_word = random.choice(self.config['HUMANIZER_TWEAKS'][clean_word])
@@ -167,8 +170,10 @@ class TikTokAutomator:
                     new_words.append(new_word + word[len(clean_word):])
                     continue
             
-            if 'u' in clean_word and len(clean_word) > 2:
-                if random.random() < 0.15:
+            # --- Tier 2: General u -> v swap (but not at the end of a word) ---
+            if 'u' in clean_word and not clean_word.endswith('u') and len(clean_word) > 2:
+                if random.random() < 0.15: # 15% chance to swap 'u' for 'v'
+                    # Replace only the first 'u' to be less aggressive
                     new_word = word.replace('u', 'v', 1).replace('U', 'V', 1)
                     new_words.append(new_word)
                     continue
@@ -176,9 +181,14 @@ class TikTokAutomator:
             new_words.append(word)
         return " ".join(new_words)
 
-
+    def _type_comment(self, comment_area, comment_text):
+        """Helper function to type a comment character by character."""
+        for char in comment_text:
+            comment_area.send_keys(char)
+            time.sleep(random.uniform(0.02, 0.08))
+    
     def _process_comment_input_and_post(self):
-        """Builds, humanizes, validates, and posts a random comment."""
+        """Builds, validates, and posts a comment, with error handling for emojis."""
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
         if not comment_area: return False
         self._safe_click(comment_area, "comment input area")
@@ -186,7 +196,8 @@ class TikTokAutomator:
 
         # Loop to ensure the generated comment is within the character limit
         final_comment = ""
-        for _ in range(10): # Try up to 10 times to generate a valid comment
+        comment_without_emoji = ""
+        for _ in range(10): 
             opener = random.choice(self.config['AD_OPENERS'])
             cta = random.choice(self.config['CALL_TO_ACTIONS'])
             link = random.choice(self.config['DISCORD_LINKS'])
@@ -197,34 +208,47 @@ class TikTokAutomator:
             slang = random.choice(self.config['SLANG_ADDITIONS'])
             emoji = random.choice(self.config['EMOJIS'])
             
-            temp_comment = humanized_comment
+            comment_without_emoji = humanized_comment
             if slang:
                 if random.random() < 0.5:
-                    temp_comment = f"{slang} {temp_comment}"
+                    comment_without_emoji = f"{slang} {comment_without_emoji}"
                 else:
-                    temp_comment = f"{temp_comment} {slang}"
+                    comment_without_emoji = f"{comment_without_emoji} {slang}"
             
-            final_comment = f"{temp_comment} {emoji}".strip()
+            final_comment = f"{comment_without_emoji} {emoji}".strip()
 
             if len(final_comment) <= 150:
-                break # The comment is a valid length, so we can proceed
-            else:
-                logging.warning(f"Generated comment was too long ({len(final_comment)} chars). Retrying...")
+                break
         else:
-            logging.error("Could not generate a comment under 150 characters after 10 attempts. Skipping.")
+            logging.error("Could not generate a comment under 150 characters. Skipping.")
             return False
 
         logging.info(f"Typing comment: '{final_comment}'")
-        for char in final_comment:
-            comment_area.send_keys(char)
-            time.sleep(random.uniform(0.02, 0.08)) # Even faster typing
-        time.sleep(0.5)
+        try:
+            # First, try to type the comment with the emoji
+            self._type_comment(comment_area, final_comment)
+        except WebDriverException as e:
+            # If it fails due to the emoji, retry without it
+            if "only supports characters in the BMP" in str(e):
+                logging.warning("Emoji not supported, retrying comment without it.")
+                try:
+                    # Clear the input field and type the comment again without the emoji
+                    comment_area.clear()
+                    self._type_comment(comment_area, comment_without_emoji)
+                    final_comment = comment_without_emoji # Update the final comment for logging
+                except Exception as retry_e:
+                    logging.error(f"Failed to post comment even after removing emoji: {retry_e}")
+                    return False
+            else:
+                # If it's a different error, re-raise it
+                raise e
 
+        time.sleep(0.5)
         post_button = self._safe_find_element(By.CSS_SELECTOR, '[data-e2e="comment-post"]')
         if self._safe_click(post_button, "comment post button"):
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
-            time.sleep(1.2) # Faster post-registration wait
+            time.sleep(1.2)
             return True
         return False
 
@@ -270,7 +294,7 @@ class TikTokAutomator:
             article_num = 1
             while True:
                 logging.info(f"--- Processing video in article {article_num} ---")
-                time.sleep(random.uniform(0.7, 1.5)) # Faster pre-interaction delay
+                time.sleep(random.uniform(0.7, 1.5))
                 
                 try:
                     WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
