@@ -15,7 +15,7 @@ import undetected_chromedriver as uc
 import logging
 from datetime import datetime
 import os
-from config import AD_OPENERS, CALL_TO_ACTIONS, EMOJIS, DISCORD_LINKS, DELAY_BETWEEN_ACTIONS, RUN_HEADLESS, COMMENT_LOG_FILE
+from config import AD_OPENERS, CALL_TO_ACTIONS, EMOJIS, DISCORD_LINKS, HUMANIZER_TWEAKS, SLANG_ADDITIONS, DELAY_BETWEEN_ACTIONS, COMMENT_LOG_FILE
 
 # Configure logging for better feedback
 log_format = '%(asctime)s - [%(threadName)-25s] - %(levelname)s - %(message)s'
@@ -127,13 +127,11 @@ class TikTokAutomator:
         """Checks if the comment section for the current video is disabled."""
         logging.info("Checking if comments are disabled...")
         try:
-            # TikTok often adds 'aria-disabled="true"' to the button or shows specific text.
             comment_button = self._safe_find_element(By.XPATH, f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[2]', timeout=3)
             if comment_button and comment_button.get_attribute('aria-disabled') == 'true':
                 logging.warning("Comments are disabled for this video (aria-disabled attribute found).")
                 return True
             
-            # Look for text like "Comments are turned off"
             disabled_text_element = self._safe_find_element(By.XPATH, "//*[contains(text(), 'Comments are turned off')]", timeout=1)
             if disabled_text_element:
                 logging.warning("Comments are disabled for this video (text found).")
@@ -154,30 +152,77 @@ class TikTokAutomator:
                 return True
         logging.warning("Could not open comment sidebar.")
         return False
+    
+    def _humanize_comment(self, text):
+        """Applies misspellings and slang to a comment to make it appear more human."""
+        words = text.split()
+        new_words = []
+        for word in words:
+            # Clean the word of punctuation to check it
+            clean_word = word.strip(".,!?;:").lower()
+            
+            # --- Tier 1: Specific word swaps ---
+            if clean_word in self.config['HUMANIZER_TWEAKS']:
+                if random.random() < 0.4: # 40% chance to apply a specific tweak
+                    new_word = random.choice(self.config['HUMANIZER_TWEAKS'][clean_word])
+                    # Preserve original capitalization if it was capitalized
+                    if word and word[0].isupper():
+                        new_word = new_word.capitalize()
+                    new_words.append(new_word + word[len(clean_word):]) # Re-add punctuation
+                    continue
+            
+            # --- Tier 2: General u -> v swap ---
+            if 'u' in clean_word and len(clean_word) > 2:
+                if random.random() < 0.15: # 15% chance to swap 'u' for 'v'
+                    # Replace only the first 'u' to be less aggressive
+                    new_word = word.replace('u', 'v', 1).replace('U', 'V', 1)
+                    new_words.append(new_word)
+                    continue
+
+            new_words.append(word)
+        return " ".join(new_words)
+
 
     def _process_comment_input_and_post(self):
-        """Builds a random ad comment, types it like a human, and posts."""
+        """Builds, humanizes, and posts a random comment."""
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
         if not comment_area: return False
         self._safe_click(comment_area, "comment input area")
         time.sleep(0.5)
 
-        # Build a highly randomized advertisement comment
+        # 1. Build the base advertisement
         opener = random.choice(self.config['AD_OPENERS'])
         cta = random.choice(self.config['CALL_TO_ACTIONS'])
-        emoji = random.choice(self.config['EMOJIS'])
         link = random.choice(self.config['DISCORD_LINKS'])
-        full_comment = f"{opener} {cta} {link} {emoji}".strip()
+        base_comment = f"{opener} {cta} {link}"
 
-        logging.info(f"Typing comment: '{full_comment}'")
-        for char in full_comment:
+        # 2. Apply humanizer tweaks (misspellings, slang)
+        humanized_comment = self._humanize_comment(base_comment)
+        
+        # 3. Add random slang and emojis
+        slang = random.choice(self.config['SLANG_ADDITIONS'])
+        emoji = random.choice(self.config['EMOJIS'])
+        
+        final_comment = humanized_comment
+        if slang:
+            # 50/50 chance to add slang at the beginning or end
+            if random.random() < 0.5:
+                final_comment = f"{slang} {final_comment}"
+            else:
+                final_comment = f"{final_comment} {slang}"
+        
+        final_comment = f"{final_comment} {emoji}".strip()
+
+
+        logging.info(f"Typing comment: '{final_comment}'")
+        for char in final_comment:
             comment_area.send_keys(char)
             time.sleep(random.uniform(0.03, 0.09))
         time.sleep(0.7)
 
         post_button = self._safe_find_element(By.CSS_SELECTOR, '[data-e2e="comment-post"]')
         if self._safe_click(post_button, "comment post button"):
-            self._log_comment_action(full_comment)
+            self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
             time.sleep(1.5)
             return True
@@ -199,7 +244,6 @@ class TikTokAutomator:
             try:
                 logging.debug(f"Attempting scroll method #{i+1}...")
                 scroll_method()
-                # Reduced timeout for faster feel, but still robust.
                 WebDriverWait(self.driver, 7).until(new_video_has_loaded)
                 logging.info("New video loaded successfully.")
                 return True
@@ -214,7 +258,11 @@ class TikTokAutomator:
         try:
             self._setup_driver()
             self.driver.get("https://www.tiktok.com")
-            logging.info("Browser opened. Waiting for login and Enter key press in console...")
+            
+            if not self.headless:
+                logging.info("Browser opened in Setup Mode. Waiting for user to log in...")
+                input(f"[{threading.current_thread().name}] Please log in, then press ENTER in the main console...")
+            
             start_event.wait()
             logging.info("Go signal received! Starting automation.")
             self._navigate_to_fyp()
@@ -233,7 +281,6 @@ class TikTokAutomator:
                 liked = self._like_current_video(article_index=article_num)
                 if liked: time.sleep(random.uniform(0.5, 1))
                 
-                # Check for disabled comments before attempting to comment
                 if self._check_if_comments_disabled(article_index=article_num):
                     logging.info("Skipping comment on this video.")
                 else:
@@ -276,16 +323,32 @@ if __name__ == "__main__":
     bot_config = {
         'AD_OPENERS': AD_OPENERS, 'CALL_TO_ACTIONS': CALL_TO_ACTIONS, 
         'EMOJIS': EMOJIS, 'DISCORD_LINKS': DISCORD_LINKS, 
+        'HUMANIZER_TWEAKS': HUMANIZER_TWEAKS,
+        'SLANG_ADDITIONS': SLANG_ADDITIONS,
         'DELAY_BETWEEN_ACTIONS': DELAY_BETWEEN_ACTIONS, 
         'COMMENT_LOG_FILE': COMMENT_LOG_FILE
     }
+
+    print("--- TikTok Automation Bot ---")
+    print("Select a run mode:")
+    print("  1. Setup Mode (Show browser windows for first-time login)")
+    print("  2. Headless Mode (Run in background with saved logins)")
+    
+    run_headless = False
+    while True:
+        choice = input("Enter your choice (1 or 2): ")
+        if choice == '1': break
+        elif choice == '2':
+            run_headless = True
+            break
+        else: print("Invalid choice.")
 
     while True:
         try:
             num_accounts = int(input("How many accounts do you want to run simultaneously? "))
             if num_accounts > 0: break
         except ValueError:
-            print("Invalid input. Please enter a number.")
+            print("Invalid input.")
 
     threads = []
     start_bots_event = threading.Event()
@@ -296,16 +359,19 @@ if __name__ == "__main__":
         thread = threading.Thread(
             target=start_bot_instance,
             name=account_name,
-            args=(bot_config, profile_path, RUN_HEADLESS, start_bots_event)
+            args=(bot_config, profile_path, run_headless, start_bots_event)
         )
         threads.append(thread)
         thread.start()
         time.sleep(3)
-
-    print("\n" + "="*80 + "\nAll browsers launched. Please log in to each account.\n" + "="*80)
-    input("Once logged in to ALL accounts, press ENTER here to start all bots...")
-    print("="*80 + "\n")
     
+    if not run_headless:
+        print("\n" + "="*80 + "\nAll browsers launched. Please log in to each account.\n" + "="*80)
+        input("Once logged in to ALL accounts, press ENTER here to start all bots...")
+    else:
+        print("\n" + "="*80 + "\nLaunching in Headless Mode. Press ENTER to start all bots.\n" + "="*80)
+        input()
+
     start_bots_event.set()
     for thread in threads:
         thread.join()
