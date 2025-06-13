@@ -150,18 +150,44 @@ class TikTokAutomator:
             comment_panel = self._safe_find_element(By.XPATH, '//*[@id="main-content-homepage_hot"]/aside', 10)
             if comment_panel:
                 logging.info("Comment panel opened.")
+                self.is_comment_sidebar_open = True
                 return True
         logging.warning("Could not open comment sidebar.")
         return False
-    
+
+    def _close_comment_sidebar(self):
+        """Closes the comment sidebar if it's open, using multiple locators for robustness."""
+        if not self.is_comment_sidebar_open:
+            return
+        logging.info("Attempting to close comment sidebar...")
+        
+        close_locators = [
+            (By.XPATH, "//button[@aria-label='exit']"),
+            (By.XPATH, "//*[@id='main-content-homepage_hot']/aside/div[2]/section/div[1]/div[2]/div/button"),
+            (By.CSS_SELECTOR, "#main-content-homepage_hot > aside > div.css-11k7ru5-DivCommentSidebarTransitionWrapper.e5nqjkm1.comment-sidebar-transition-enter-done > section > div.css-40y68m-DivCommentHeader.ejc82cd1 > div.css-javuk6-DivCloseButtonWrapper.ejc82cd5 > div > button"),
+            (By.XPATH, "//button[@aria-label='Close']") # Original fallback
+        ]
+
+        for by, value in close_locators:
+            try:
+                logging.debug(f"Trying to find close button with: {by}={value}")
+                close_button = self._safe_find_element(by, value, timeout=2)
+                if self._safe_click(close_button, "comment sidebar close button"):
+                    self.is_comment_sidebar_open = False
+                    time.sleep(1) # Wait for animation
+                    return
+            except Exception:
+                continue
+        
+        logging.warning("Could not close comment sidebar using any known locator. Assuming it will close on its own.")
+        self.is_comment_sidebar_open = False # Assume it's closed to avoid getting stuck
+
     def _humanize_comment(self, text):
         """Applies misspellings and slang to a comment to make it appear more human."""
         words = text.split()
         new_words = []
         for word in words:
             clean_word = word.strip(".,!?;:").lower()
-            
-            # --- Tier 1: Specific word swaps ---
             if clean_word in self.config['HUMANIZER_TWEAKS']:
                 if random.random() < 0.4:
                     new_word = random.choice(self.config['HUMANIZER_TWEAKS'][clean_word])
@@ -170,10 +196,8 @@ class TikTokAutomator:
                     new_words.append(new_word + word[len(clean_word):])
                     continue
             
-            # --- Tier 2: General u -> v swap (but not at the end of a word) ---
             if 'u' in clean_word and not clean_word.endswith('u') and len(clean_word) > 2:
-                if random.random() < 0.15: # 15% chance to swap 'u' for 'v'
-                    # Replace only the first 'u' to be less aggressive
+                if random.random() < 0.15:
                     new_word = word.replace('u', 'v', 1).replace('U', 'V', 1)
                     new_words.append(new_word)
                     continue
@@ -194,7 +218,6 @@ class TikTokAutomator:
         self._safe_click(comment_area, "comment input area")
         time.sleep(0.5)
 
-        # Loop to ensure the generated comment is within the character limit
         final_comment = ""
         comment_without_emoji = ""
         for _ in range(10): 
@@ -225,22 +248,18 @@ class TikTokAutomator:
 
         logging.info(f"Typing comment: '{final_comment}'")
         try:
-            # First, try to type the comment with the emoji
             self._type_comment(comment_area, final_comment)
         except WebDriverException as e:
-            # If it fails due to the emoji, retry without it
             if "only supports characters in the BMP" in str(e):
                 logging.warning("Emoji not supported, retrying comment without it.")
                 try:
-                    # Clear the input field and type the comment again without the emoji
                     comment_area.clear()
                     self._type_comment(comment_area, comment_without_emoji)
-                    final_comment = comment_without_emoji # Update the final comment for logging
+                    final_comment = comment_without_emoji
                 except Exception as retry_e:
                     logging.error(f"Failed to post comment even after removing emoji: {retry_e}")
                     return False
             else:
-                # If it's a different error, re-raise it
                 raise e
 
         time.sleep(0.5)
@@ -249,6 +268,7 @@ class TikTokAutomator:
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
             time.sleep(1.2)
+            self._close_comment_sidebar() # Close sidebar after successful post
             return True
         return False
 
@@ -256,6 +276,12 @@ class TikTokAutomator:
         """Navigates to the next video and waits for it to load."""
         logging.info("Scrolling to next video...")
         
+        try:
+            self.driver.find_element(By.TAG_NAME, 'body').click()
+            logging.debug("Clicked body to reset focus.")
+        except Exception as e:
+            logging.warning(f"Could not click body to reset focus: {e}")
+
         def new_video_has_loaded(driver):
             new_count = len(driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
             return new_count > current_article_count
@@ -283,10 +309,8 @@ class TikTokAutomator:
             self._setup_driver()
             self.driver.get("https://www.tiktok.com")
             
-            if not self.headless:
-                logging.info("Browser opened in Setup Mode. Waiting for user to log in...")
-                input(f"[{threading.current_thread().name}] Please log in, then press ENTER in the main console...")
-            
+            # This is now just a waiting signal, no user input here.
+            logging.info("Browser opened. Waiting for the master 'go' signal...")
             start_event.wait()
             logging.info("Go signal received! Starting automation.")
             self._navigate_to_fyp()
@@ -308,16 +332,10 @@ class TikTokAutomator:
                 if self._check_if_comments_disabled(article_index=article_num):
                     logging.info("Skipping comment on this video.")
                 else:
-                    commented = False
-                    if not self.is_comment_sidebar_open:
-                        if self._open_comment_sidebar(article_num):
-                            self.is_comment_sidebar_open = True
-                            commented = self._process_comment_input_and_post()
-                    else:
-                        commented = self._process_comment_input_and_post()
-                        if not commented: self.is_comment_sidebar_open = False
+                    if self._open_comment_sidebar(article_num):
+                        self._process_comment_input_and_post()
                 
-                if liked or ('commented' in locals() and commented):
+                if liked or self.is_comment_sidebar_open is False: # Check if interacted or sidebar is closed
                     time.sleep(random.uniform(*self.config['DELAY_BETWEEN_ACTIONS']))
 
                 current_article_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
@@ -389,6 +407,7 @@ if __name__ == "__main__":
         thread.start()
         time.sleep(3)
     
+    # This is now the one and only prompt for the user
     if not run_headless:
         print("\n" + "="*80 + "\nAll browsers launched. Please log in to each account.\n" + "="*80)
         input("Once logged in to ALL accounts, press ENTER here to start all bots...")
