@@ -267,7 +267,7 @@ class TikTokAutomator:
         try:
             for char in final_comment:
                 comment_area.send_keys(char)
-                time.sleep(random.uniform(0.02, 0.08))
+                time.sleep(random.uniform(0.04, 0.1)) # Slightly slower, more human typing
         except Exception as e:
             logging.error(f"Failed to type comment: {e}")
             return False
@@ -277,13 +277,13 @@ class TikTokAutomator:
         if self._safe_click(post_button, "comment post button"):
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
-            time.sleep(1.2)
+            time.sleep(1.5)
             self._close_comment_sidebar()
             return True
         return False
 
-    def _navigate_to_next_video(self, current_article_count):
-        """Navigates to the next video and waits for the new video count to be higher."""
+    def _navigate_to_next_video(self, article_index):
+        """Navigates to the next video using multiple scrolling and verification methods."""
         logging.info("Scrolling to next video...")
         
         try:
@@ -292,27 +292,38 @@ class TikTokAutomator:
         except Exception as e:
             logging.warning(f"Could not click body to reset focus: {e}")
 
-        def new_video_has_loaded(driver):
-            new_count = len(driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
-            return new_count > current_article_count
-
-        scroll_methods = [
-            lambda: self.driver.execute_script("window.scrollBy(0, window.innerHeight);"),
-            lambda: self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
-        ]
-
-        for i, scroll_method in enumerate(scroll_methods):
-            try:
-                logging.debug(f"Attempting scroll method #{i+1}...")
-                scroll_method()
-                WebDriverWait(self.driver, 15).until(new_video_has_loaded)
-                logging.info("New video loaded successfully.")
-                return True
-            except Exception as e:
-                logging.warning(f"Scroll method #{i+1} failed or new video did not load in time: {e}")
+        # --- Primary Method: JavaScript Scroll ---
+        try:
+            logging.debug("Attempting primary scroll method (JavaScript)...")
+            self.driver.execute_script("window.scrollBy(0, window.innerHeight);")
+            time.sleep(2.0) # Increased static pause for the DOM to settle
+            
+            # Use explicit wait to confirm the next video element is loaded
+            next_video_xpath = f'//*[@id="column-list-container"]/article[{article_index + 1}]'
+            WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, next_video_xpath)))
+            
+            logging.info("New video loaded successfully (verified by next element).")
+            return True
+        except Exception as e:
+            logging.warning(f"Primary scroll method failed: {e}. Trying fallback...")
         
-        logging.error("All scroll methods failed.")
-        return False
+        # --- Fallback Method: PAGE_DOWN Key Press ---
+        try:
+            logging.debug("Attempting fallback scroll method (PAGE_DOWN)...")
+            self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+            time.sleep(3.0) # Longer static pause for this less reliable method
+            
+            # Check if a new video appeared, even without the explicit wait
+            new_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
+            if new_count > article_index:
+                 logging.info("New video loaded successfully (verified by fallback).")
+                 return True
+            else:
+                 raise Exception("Video count did not increase after fallback scroll.")
+        except Exception as e_fallback:
+            logging.error(f"All scroll methods failed. Fallback error: {e_fallback}")
+            return False
+
 
     def run(self, start_event):
         """Main automation loop with self-healing for crashed sessions."""
@@ -327,10 +338,10 @@ class TikTokAutomator:
                 if self.headless:
                     if not self._check_login_status():
                         logging.critical("Headless login failed. Please run in Setup Mode (Choice 1) to refresh your session.")
-                        return # Exit this thread permanently if headless login fails
+                        return # Exit this thread permanently
                 
                 if first_run:
-                    logging.info("Browser opened. Waiting for the master 'go' signal from the main console...")
+                    logging.info("Browser opened. Waiting for the user to press ENTER in the main console...")
                     start_event.wait()
                     first_run = False
                 
@@ -344,11 +355,10 @@ class TikTokAutomator:
                         WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
                     except TimeoutException:
                         logging.error("Timed out waiting for current video article to load. Stopping.")
-                        break
+                        break # Exit interaction loop
 
                     if self._check_if_sponsored(article_index=article_num):
-                        current_article_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
-                        if not self._navigate_to_next_video(current_article_count):
+                        if not self._navigate_to_next_video(article_num):
                             break
                         article_num += 1
                         continue
@@ -365,9 +375,8 @@ class TikTokAutomator:
                     if liked or not self.is_comment_sidebar_open:
                         time.sleep(random.uniform(*self.config['DELAY_BETWEEN_ACTIONS']))
                     
-                    current_article_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
-                    if not self._navigate_to_next_video(current_article_count):
-                        break
+                    if not self._navigate_to_next_video(article_num):
+                        break # Exit interaction loop
                     article_num += 1
             
             except InvalidSessionIdException:
@@ -380,6 +389,8 @@ class TikTokAutomator:
                 logging.critical(f"An unrecoverable, non-session-crash error occurred: {e}", exc_info=True)
                 break # Break the self-healing loop for other critical errors
             
+            break
+
         self.close()
 
     def close(self):
@@ -389,7 +400,7 @@ class TikTokAutomator:
             try:
                 self.driver.quit()
             except Exception:
-                pass # Ignore errors on quit, as the session might already be dead
+                pass # Ignore errors on quit
 
 def start_bot_instance(config, profile_dir, headless, start_event):
     """Target function for each thread."""
