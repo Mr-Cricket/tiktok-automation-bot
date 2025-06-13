@@ -15,7 +15,7 @@ import undetected_chromedriver as uc
 import logging
 from datetime import datetime
 import os
-from config import COMMENTS, DELAY_BETWEEN_ACTIONS, RUN_HEADLESS, COMMENT_LOG_FILE
+from config import COMMENTS, DISCORD_LINKS, DELAY_BETWEEN_ACTIONS, RUN_HEADLESS, COMMENT_LOG_FILE
 
 # Configure logging for better feedback
 # Use a custom format to include the thread name (account name)
@@ -28,9 +28,10 @@ class TikTokAutomator:
     Each instance of this class will be controlled by a separate thread.
     """
 
-    def __init__(self, comments, delay_range, profile_dir, comment_log_file, headless=False):
+    def __init__(self, comments, discord_links, delay_range, profile_dir, comment_log_file, headless=False):
         """Initializes the TikTokAutomator."""
         self.comments = comments
+        self.discord_links = discord_links
         self.delay_range = delay_range
         self.comment_log_file = comment_log_file
         self.profile_dir = profile_dir
@@ -149,7 +150,7 @@ class TikTokAutomator:
         comment_icon_xpath = f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[2]'
         comment_icon = self._safe_find_element(By.XPATH, comment_icon_xpath)
         if self._safe_click(comment_icon, "comment icon"):
-            time.sleep(1.5)
+            time.sleep(1.8) # Adjusted delay
             comment_panel = self._safe_find_element(By.XPATH, '//*[@id="main-content-homepage_hot"]/aside', 10)
             if comment_panel:
                 logging.info("Comment panel opened.")
@@ -158,7 +159,7 @@ class TikTokAutomator:
         return False
 
     def _process_comment_input_and_post(self):
-        """Finds comment input, types, and posts."""
+        """Finds comment input, types comment like a human, and posts."""
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
         if not comment_area:
             logging.warning("Comment input area not found.")
@@ -167,26 +168,47 @@ class TikTokAutomator:
         self._safe_click(comment_area, "comment input area")
         time.sleep(0.5)
 
-        comment = random.choice(self.comments)
-        comment_area.send_keys(comment)
-        time.sleep(0.5)
+        # Combine a random comment with a random link
+        comment_base = random.choice(self.comments)
+        discord_link = random.choice(self.discord_links)
+        full_comment = f"{comment_base} {discord_link}"
+        
+        logging.info(f"Typing comment: '{full_comment}'")
+        # Human-like typing to avoid detection and truncation
+        for char in full_comment:
+            comment_area.send_keys(char)
+            time.sleep(random.uniform(0.03, 0.09)) # Slightly faster typing
+        
+        time.sleep(0.7) # Slightly faster pause after typing
 
         post_button = self._safe_find_element(By.CSS_SELECTOR, '[data-e2e="comment-post"]')
         if self._safe_click(post_button, "comment post button"):
-            self._log_comment_action(comment)
-            time.sleep(1.2)
+            self._log_comment_action(full_comment)
+            logging.info("Comment posted successfully.")
+            time.sleep(1.5) # Wait for post to register
             return True
+        
+        logging.warning("Failed to post comment.")
         return False
 
     def _navigate_to_next_video(self):
-        """Navigates to the next video."""
+        """Navigates to the next video, with a fallback method."""
         try:
-            self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
-            time.sleep(random.uniform(2.0, 3.5))
+            # Primary Method: JavaScript scroll (works in background)
+            logging.info("Scrolling to next video using JavaScript...")
+            self.driver.execute_script("window.scrollBy(0, window.innerHeight);")
+            time.sleep(random.uniform(2.0, 3.5)) # Faster navigation
             return True
         except Exception as e:
-            logging.error(f"An error occurred while navigating: {e}")
-            return False
+            # Fallback Method: PAGE_DOWN key press (requires window focus)
+            logging.warning(f"JavaScript scroll failed: {e}. Trying PAGE_DOWN key press as a fallback.")
+            try:
+                self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+                time.sleep(random.uniform(2.0, 3.5))
+                return True
+            except Exception as e_fallback:
+                logging.error(f"PAGE_DOWN fallback also failed: {e_fallback}")
+                return False
 
     def run(self, start_event):
         """Main function to run the automation infinitely for one instance."""
@@ -203,8 +225,8 @@ class TikTokAutomator:
             article_num = 1
             while True:
                 logging.info(f"--- Processing video in article {article_num} ---")
-                time.sleep(random.uniform(0.8, 1.8))
-                liked = self._like_current_video(article_num)
+                time.sleep(random.uniform(0.8, 1.8)) # Faster pre-interaction delay
+                liked = self._like_current_video(article_index=article_num)
                 if liked: time.sleep(random.uniform(0.5, 1))
 
                 commented = False
@@ -226,7 +248,8 @@ class TikTokAutomator:
                 if not self._navigate_to_next_video():
                     logging.error("Failed to navigate. Stopping this instance.")
                     break
-                article_num += 1
+                # Increment article number to target the next video element
+                article_num += 1 
 
         except Exception as e:
             logging.critical(f"An unrecoverable error occurred: {e}", exc_info=True)
@@ -239,9 +262,9 @@ class TikTokAutomator:
             logging.info("Closing browser.")
             self.driver.quit()
 
-def start_bot_instance(comments, delay, profile_dir, log_file, headless, start_event):
+def start_bot_instance(comments, discord_links, delay, profile_dir, log_file, headless, start_event):
     """Target function for each thread. Creates and runs a bot instance."""
-    automator = TikTokAutomator(comments, delay, profile_dir, log_file, headless)
+    automator = TikTokAutomator(comments, discord_links, delay, profile_dir, log_file, headless)
     automator.run(start_event)
 
 # A lock to ensure only one thread writes to the log file at a time
@@ -270,7 +293,7 @@ if __name__ == "__main__":
         thread = threading.Thread(
             target=start_bot_instance,
             name=account_name,
-            args=(COMMENTS, DELAY_BETWEEN_ACTIONS, profile_path, COMMENT_LOG_FILE, RUN_HEADLESS, start_bots_event)
+            args=(COMMENTS, DISCORD_LINKS, DELAY_BETWEEN_ACTIONS, profile_path, COMMENT_LOG_FILE, RUN_HEADLESS, start_bots_event)
         )
         threads.append(thread)
         thread.start()
@@ -286,4 +309,3 @@ if __name__ == "__main__":
 
     for thread in threads:
         thread.join()
-
