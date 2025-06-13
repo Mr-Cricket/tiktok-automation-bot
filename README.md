@@ -56,7 +56,7 @@ It's best practice to create a virtual environment to keep project dependencies 
 
 **3. Install Required Packages:**
 
-Install all the required Python packages from the `requirements.txt` file. This command reads the file and installs everything the bot needs to run.
+Install all the required Python packages from the `requirements.txt` file. This command reads the file and installs everything the bot needs to run, including a compatibility patch (`setuptools`) needed for newer versions of Python
 
 > `pip install -r requirements.txt`
 
@@ -64,6 +64,8 @@ Install all the required Python packages from the `requirements.txt` file. This 
 **1. Configure Your Settings:**
 
 Open the `config.py` file and customize the settings to your liking:
+
+* `DISCORD_LINKS`: This is important! Replace the placeholder links with your own permanent Discord server invites. The bot will randomly pick from this list.
 
 * `COMMENTS`: Add the comments you want the bot to post. It will choose one randomly for each video.
 
@@ -90,6 +92,23 @@ Execute the `main.py` script from your terminal.
 **4. Stopping the Bot:**
 
 To stop all running bots, simply go to the terminal window where the script is running and press `Ctrl+C`.
+
+## 🛠️ Troubleshooting
+**Problem: `Permission Denied` Error During Installation**
+
+If you see an error message like `OSError: [Errno 13] Permission denied` when running `pip install`, it means your command prompt doesn't have the necessary rights to save files.
+
+Solution: Run as Administrator
+
+**Close** your current Command Prompt window.
+
+Go to your Windows Start Menu and type `cmd`.
+
+**Right-click** on "Command Prompt" in the search results.
+
+Select **"Run as administrator"**.
+
+In the new administrator Command Prompt, navigate back to your project folder (`cd tiktok-automation-bot`), activate the virtual environment (`venv\Scripts\activate`), and then run the `pip install -r requirements.txt` command again. It will work this time.
 
 ## ⚖️ Disclaimer
 This project is for educational purposes only. Automating user interactions can be against the terms of service of many platforms, including TikTok. Use this software responsibly and at your own risk. The developers of this project are not responsible for any account suspension or other consequences that may arise from its use. Don't be stupid cunts, you wankers. 
