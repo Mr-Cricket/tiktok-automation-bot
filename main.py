@@ -15,25 +15,18 @@ import undetected_chromedriver as uc
 import logging
 from datetime import datetime
 import os
-from config import COMMENTS, DISCORD_LINKS, DELAY_BETWEEN_ACTIONS, RUN_HEADLESS, COMMENT_LOG_FILE
+from config import AD_OPENERS, CALL_TO_ACTIONS, EMOJIS, DISCORD_LINKS, DELAY_BETWEEN_ACTIONS, RUN_HEADLESS, COMMENT_LOG_FILE
 
 # Configure logging for better feedback
-# Use a custom format to include the thread name (account name)
 log_format = '%(asctime)s - [%(threadName)-25s] - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format)
 
 class TikTokAutomator:
-    """
-    A class to automate interactions on TikTok's For You Page (FYP).
-    Each instance of this class will be controlled by a separate thread.
-    """
+    """A class to automate interactions on TikTok's For You Page (FYP)."""
 
-    def __init__(self, comments, discord_links, delay_range, profile_dir, comment_log_file, headless=False):
+    def __init__(self, config, profile_dir, headless=False):
         """Initializes the TikTokAutomator."""
-        self.comments = comments
-        self.discord_links = discord_links
-        self.delay_range = delay_range
-        self.comment_log_file = comment_log_file
+        self.config = config
         self.profile_dir = profile_dir
         self.headless = headless
         self.is_comment_sidebar_open = False
@@ -45,15 +38,12 @@ class TikTokAutomator:
         logging.info(f"Initializing Chrome driver with profile: {self.profile_dir}")
         options = uc.ChromeOptions()
         options.add_argument(f"--user-data-dir={self.profile_dir}")
-
         if self.headless:
             options.add_argument("--headless")
-            logging.info("Running in headless mode.")
         options.add_argument("--start-maximized")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        
         self.driver = uc.Chrome(options=options)
         self.wait = WebDriverWait(self.driver, 10)
         logging.info("Driver initialized.")
@@ -88,17 +78,11 @@ class TikTokAutomator:
                 return False
 
     def _navigate_to_fyp(self):
-        """Finds and clicks the 'For You' page button using multiple locators."""
+        """Finds and clicks the 'For You' page button."""
         logging.info("Attempting to navigate to the For You page...")
-        locators = [
-            (By.XPATH, "//button[@aria-label='For You']"),
-            (By.CSS_SELECTOR, "a[href='/foryou']"),
-            (By.XPATH, "//p[text()='For You']/ancestor::a")
-        ]
-        
+        locators = [(By.XPATH, "//button[@aria-label='For You']"), (By.CSS_SELECTOR, "a[href='/foryou']")]
         for by, value in locators:
             try:
-                logging.debug(f"Trying to find FYP button with: {by}={value}")
                 fyp_button = self._safe_find_element(by, value, timeout=5)
                 if self._safe_click(fyp_button, "For You page button"):
                     logging.info("Successfully navigated to the For You page.")
@@ -106,23 +90,17 @@ class TikTokAutomator:
                     return
             except Exception:
                 continue
-        
         logging.warning("Could not find FYP button. Assuming we are on the correct page.")
 
     def _like_current_video(self, article_index):
         """Attempts to like the currently visible video."""
         logging.info(f"Attempting to like video in article [{article_index}]...")
-        like_button_xpath = f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[1]'
-        like_button = self._safe_find_element(By.XPATH, like_button_xpath)
-        
+        like_button = self._safe_find_element(By.XPATH, f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[1]')
         if like_button and "like video" in like_button.get_attribute('aria-label').lower():
-            if self._safe_click(like_button, f"like button for article {article_index}"):
+            if self._safe_click(like_button, "like button"):
                 return True
-
         logging.warning("Like button not found or click failed. Attempting double-tap...")
-        video_player_xpath = f'//*[@id="column-list-container"]/article[{article_index}]//video'
-        video_player = self._safe_find_element(By.XPATH, video_player_xpath, 5)
-        
+        video_player = self._safe_find_element(By.XPATH, f'//*[@id="column-list-container"]/article[{article_index}]//video', 5)
         if video_player:
             try:
                 from selenium.webdriver.common.action_chains import ActionChains
@@ -134,23 +112,42 @@ class TikTokAutomator:
         return False
 
     def _log_comment_action(self, comment_text):
-        """Logs the successful comment action to a file, with thread safety."""
+        """Logs the successful comment action to a file."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] Account: {threading.current_thread().name} | Comment: \"{comment_text}\"\n"
         try:
             with comment_log_lock:
-                with open(self.comment_log_file, "a", encoding="utf-8") as f:
+                with open(self.config['COMMENT_LOG_FILE'], "a", encoding="utf-8") as f:
                     f.write(log_entry)
             logging.info(f"Logged comment action.")
         except IOError as e:
             logging.error(f"Could not write to log file: {e}")
 
+    def _check_if_comments_disabled(self, article_index):
+        """Checks if the comment section for the current video is disabled."""
+        logging.info("Checking if comments are disabled...")
+        try:
+            # TikTok often adds 'aria-disabled="true"' to the button or shows specific text.
+            comment_button = self._safe_find_element(By.XPATH, f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[2]', timeout=3)
+            if comment_button and comment_button.get_attribute('aria-disabled') == 'true':
+                logging.warning("Comments are disabled for this video (aria-disabled attribute found).")
+                return True
+            
+            # Look for text like "Comments are turned off"
+            disabled_text_element = self._safe_find_element(By.XPATH, "//*[contains(text(), 'Comments are turned off')]", timeout=1)
+            if disabled_text_element:
+                logging.warning("Comments are disabled for this video (text found).")
+                return True
+        except Exception as e:
+            logging.error(f"Error while checking for disabled comments: {e}")
+        logging.info("Comments appear to be enabled.")
+        return False
+
     def _open_comment_sidebar(self, article_index):
         """Attempts to click the comment icon."""
-        comment_icon_xpath = f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[2]'
-        comment_icon = self._safe_find_element(By.XPATH, comment_icon_xpath)
+        comment_icon = self._safe_find_element(By.XPATH, f'//*[@id="column-list-container"]/article[{article_index}]/div/section[2]/button[2]')
         if self._safe_click(comment_icon, "comment icon"):
-            time.sleep(1.8) # Adjusted delay
+            time.sleep(1.8)
             comment_panel = self._safe_find_element(By.XPATH, '//*[@id="main-content-homepage_hot"]/aside', 10)
             if comment_panel:
                 logging.info("Comment panel opened.")
@@ -159,97 +156,103 @@ class TikTokAutomator:
         return False
 
     def _process_comment_input_and_post(self):
-        """Finds comment input, types comment like a human, and posts."""
+        """Builds a random ad comment, types it like a human, and posts."""
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
-        if not comment_area:
-            logging.warning("Comment input area not found.")
-            return False
-        
+        if not comment_area: return False
         self._safe_click(comment_area, "comment input area")
         time.sleep(0.5)
 
-        # Combine a random comment with a random link
-        comment_base = random.choice(self.comments)
-        discord_link = random.choice(self.discord_links)
-        full_comment = f"{comment_base} {discord_link}"
-        
+        # Build a highly randomized advertisement comment
+        opener = random.choice(self.config['AD_OPENERS'])
+        cta = random.choice(self.config['CALL_TO_ACTIONS'])
+        emoji = random.choice(self.config['EMOJIS'])
+        link = random.choice(self.config['DISCORD_LINKS'])
+        full_comment = f"{opener} {cta} {link} {emoji}".strip()
+
         logging.info(f"Typing comment: '{full_comment}'")
-        # Human-like typing to avoid detection and truncation
         for char in full_comment:
             comment_area.send_keys(char)
-            time.sleep(random.uniform(0.03, 0.09)) # Slightly faster typing
-        
-        time.sleep(0.7) # Slightly faster pause after typing
+            time.sleep(random.uniform(0.03, 0.09))
+        time.sleep(0.7)
 
         post_button = self._safe_find_element(By.CSS_SELECTOR, '[data-e2e="comment-post"]')
         if self._safe_click(post_button, "comment post button"):
             self._log_comment_action(full_comment)
             logging.info("Comment posted successfully.")
-            time.sleep(1.5) # Wait for post to register
+            time.sleep(1.5)
             return True
-        
-        logging.warning("Failed to post comment.")
         return False
 
-    def _navigate_to_next_video(self):
-        """Navigates to the next video, with a fallback method."""
-        try:
-            # Primary Method: JavaScript scroll (works in background)
-            logging.info("Scrolling to next video using JavaScript...")
-            self.driver.execute_script("window.scrollBy(0, window.innerHeight);")
-            time.sleep(random.uniform(2.0, 3.5)) # Faster navigation
-            return True
-        except Exception as e:
-            # Fallback Method: PAGE_DOWN key press (requires window focus)
-            logging.warning(f"JavaScript scroll failed: {e}. Trying PAGE_DOWN key press as a fallback.")
+    def _navigate_to_next_video(self, current_article_count):
+        """Navigates to the next video and waits for it to load."""
+        logging.info("Scrolling to next video...")
+        
+        def new_video_has_loaded(driver):
+            new_count = len(driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
+            return new_count > current_article_count
+
+        scroll_methods = [
+            lambda: self.driver.execute_script("window.scrollBy(0, window.innerHeight);"),
+            lambda: self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+        ]
+        for i, scroll_method in enumerate(scroll_methods):
             try:
-                self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
-                time.sleep(random.uniform(2.0, 3.5))
+                logging.debug(f"Attempting scroll method #{i+1}...")
+                scroll_method()
+                # Reduced timeout for faster feel, but still robust.
+                WebDriverWait(self.driver, 7).until(new_video_has_loaded)
+                logging.info("New video loaded successfully.")
                 return True
-            except Exception as e_fallback:
-                logging.error(f"PAGE_DOWN fallback also failed: {e_fallback}")
-                return False
+            except Exception as e:
+                logging.warning(f"Scroll method #{i+1} failed or new video did not load in time: {e}")
+        
+        logging.error("All scroll methods failed.")
+        return False
 
     def run(self, start_event):
-        """Main function to run the automation infinitely for one instance."""
+        """Main automation loop."""
         try:
             self._setup_driver()
             self.driver.get("https://www.tiktok.com")
-            
             logging.info("Browser opened. Waiting for login and Enter key press in console...")
             start_event.wait()
             logging.info("Go signal received! Starting automation.")
-
             self._navigate_to_fyp()
             
             article_num = 1
             while True:
                 logging.info(f"--- Processing video in article {article_num} ---")
-                time.sleep(random.uniform(0.8, 1.8)) # Faster pre-interaction delay
+                time.sleep(random.uniform(0.8, 1.8))
+                
+                try:
+                    WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
+                except TimeoutException:
+                    logging.error("Timed out waiting for next video article to load. Stopping.")
+                    break
+
                 liked = self._like_current_video(article_index=article_num)
                 if liked: time.sleep(random.uniform(0.5, 1))
-
-                commented = False
-                if not self.is_comment_sidebar_open:
-                    if self._open_comment_sidebar(article_num):
-                        self.is_comment_sidebar_open = True
+                
+                # Check for disabled comments before attempting to comment
+                if self._check_if_comments_disabled(article_index=article_num):
+                    logging.info("Skipping comment on this video.")
+                else:
+                    commented = False
+                    if not self.is_comment_sidebar_open:
+                        if self._open_comment_sidebar(article_num):
+                            self.is_comment_sidebar_open = True
+                            commented = self._process_comment_input_and_post()
+                    else:
                         commented = self._process_comment_input_and_post()
-                else:
-                    commented = self._process_comment_input_and_post()
-                    if not commented:
-                        self.is_comment_sidebar_open = False
+                        if not commented: self.is_comment_sidebar_open = False
+                
+                if liked or ('commented' in locals() and commented):
+                    time.sleep(random.uniform(*self.config['DELAY_BETWEEN_ACTIONS']))
 
-                if liked or commented:
-                    logging.info(f"Interaction complete. Waiting before next navigation...")
-                    time.sleep(random.uniform(*self.delay_range))
-                else:
-                    logging.info(f"No interaction for this video.")
-
-                if not self._navigate_to_next_video():
-                    logging.error("Failed to navigate. Stopping this instance.")
+                current_article_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
+                if not self._navigate_to_next_video(current_article_count):
                     break
-                # Increment article number to target the next video element
-                article_num += 1 
+                article_num += 1
 
         except Exception as e:
             logging.critical(f"An unrecoverable error occurred: {e}", exc_info=True)
@@ -257,55 +260,52 @@ class TikTokAutomator:
             self.close()
 
     def close(self):
-        """Closes the browser for this instance."""
+        """Closes the browser."""
         if self.driver:
             logging.info("Closing browser.")
             self.driver.quit()
 
-def start_bot_instance(comments, discord_links, delay, profile_dir, log_file, headless, start_event):
-    """Target function for each thread. Creates and runs a bot instance."""
-    automator = TikTokAutomator(comments, discord_links, delay, profile_dir, log_file, headless)
+def start_bot_instance(config, profile_dir, headless, start_event):
+    """Target function for each thread."""
+    automator = TikTokAutomator(config, profile_dir, headless)
     automator.run(start_event)
 
-# A lock to ensure only one thread writes to the log file at a time
 comment_log_lock = threading.Lock()
 
 if __name__ == "__main__":
+    bot_config = {
+        'AD_OPENERS': AD_OPENERS, 'CALL_TO_ACTIONS': CALL_TO_ACTIONS, 
+        'EMOJIS': EMOJIS, 'DISCORD_LINKS': DISCORD_LINKS, 
+        'DELAY_BETWEEN_ACTIONS': DELAY_BETWEEN_ACTIONS, 
+        'COMMENT_LOG_FILE': COMMENT_LOG_FILE
+    }
+
     while True:
         try:
             num_accounts = int(input("How many accounts do you want to run simultaneously? "))
-            if num_accounts > 0:
-                break
-            else:
-                print("Please enter a number greater than 0.")
+            if num_accounts > 0: break
         except ValueError:
             print("Invalid input. Please enter a number.")
 
     threads = []
     start_bots_event = threading.Event()
-
     for i in range(num_accounts):
         account_name = f"Account-{i+1}"
         profile_path = os.path.join(os.getcwd(), "tiktok_profiles", f"profile_{i+1}")
-        
-        logging.info(f"Preparing to launch {account_name} with profile path: {profile_path}")
-
+        logging.info(f"Preparing to launch {account_name}...")
         thread = threading.Thread(
             target=start_bot_instance,
             name=account_name,
-            args=(COMMENTS, DISCORD_LINKS, DELAY_BETWEEN_ACTIONS, profile_path, COMMENT_LOG_FILE, RUN_HEADLESS, start_bots_event)
+            args=(bot_config, profile_path, RUN_HEADLESS, start_bots_event)
         )
         threads.append(thread)
         thread.start()
         time.sleep(3)
 
-    print("\n" + "="*80)
-    print(f"All {num_accounts} browser windows have been launched.")
-    print("Please log in to each TikTok account in its respective window.")
-    input("Once you have logged in to ALL accounts, press ENTER here to start all bots...")
+    print("\n" + "="*80 + "\nAll browsers launched. Please log in to each account.\n" + "="*80)
+    input("Once logged in to ALL accounts, press ENTER here to start all bots...")
     print("="*80 + "\n")
     
     start_bots_event.set()
-
     for thread in threads:
         thread.join()
