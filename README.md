@@ -3,19 +3,18 @@ A powerful, multi-account TikTok automation bot built with Python and Selenium. 
 ## ✨ Features
 * Multi-Account Management: Run multiple bot instances for different accounts at the same time.
 
+* User-Friendly Menu: Choose between a visible "Setup Mode" for first-time logins and a background "Headless Mode" for normal runs.
+
 * Automatic Login: Saves session data to automatically log in after the first manual login for each account.
 
 * Concurrent Execution: Utilizes threading to run multiple browser instances in parallel.
 
-* Dynamic & Robust: Uses a dynamic article-finding model to reliably navigate the FYP and avoid common errors.
+* Advanced Comment Engine: Builds unique, human-like comments from a library of phrases to avoid spam detection.
 
-* Smart Interaction: Can like videos and post from a predefined list of comments.
+* Smart Error Handling: Intelligently detects when comments are disabled on a video and skips it, preventing errors.
 
-* Error Handling: Includes robust error handling and fallbacks (e.g., double-tap to like if the button fails).
+* Robust Navigation: Uses multiple scrolling methods and waits for new content to load, eliminating race conditions and allowing the bot to run reliably in the background.
 
-* Easy Configuration: All user settings are centralized in a config.py file.
-
-* Action Logging: Keeps a detailed tiktok_comments.txt log of all comments posted.
 ## 📋 Prerequisites
 Before you begin, ensure you have the following installed on your computer:
 
@@ -73,17 +72,31 @@ Before running the bot, you can customize its behavior by editing the `config.py
 
 * `RUN_HEADLESS`: Set to `True` to run the browsers in the background (no visible UI). Defaults to `False`.
 
-**2. Run the Bot:**
+## 2. Run the Bot and Choose a Mode:
 
 Execute the `main.py` script from your terminal.
 
-> `python main.py`
+>`python main.py`
 
-The script will now ask you to choose a run mode:
+The script will now ask you to choose a run mode. Here is the recommended workflow:
 
-* **Choose `1` for Setup Mode**: Use this for the **first time** you run any new account. It will open a visible browser window, allowing you to log in manually. The bot will save your session for future runs.
+* **For First-Time Setup**:
 
-* **Choose `2` for Headless Mode**: Use this for **all subsequent runs**. The bot will use your saved login and run completely invisibly in the background, which is the recommended way to operate.
+  1. Choose `1` for **Setup Mode**.
+
+  2. Enter the number of accounts you want to set up (e.g., `3`).
+
+  3. A visible browser window will open for each account. **Log in manually** to each one.
+
+  4. Once all accounts are logged in, press Enter in the terminal to start the bots. You can let them run for a minute and then stop them with `Ctrl+C`. The login sessions are now saved.
+
+* **For All Future Runs**:
+
+  1. **Choose `2` for Headless Mode**.
+
+  2. Enter the number of accounts you want to run.
+
+  3. The bot will now use your saved logins and run completely invisibly in the background.
 
 **3. Stopping the Bot:**
 
