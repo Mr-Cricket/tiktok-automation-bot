@@ -78,8 +78,8 @@ SLANG_ADDITIONS = [
 
 
 # The delay range (in seconds) to wait after a successful interaction.
-# Fine-tuned for slightly faster performance.
-DELAY_BETWEEN_ACTIONS = (2.0, 4.5)
+# Fine-tuned for a slightly slower, more stable pace.
+DELAY_BETWEEN_ACTIONS = (3.5, 6.0)
 
 # The name of the file where comment logs will be stored.
 COMMENT_LOG_FILE = "tiktok_comments.txt"
