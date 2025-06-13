@@ -156,31 +156,18 @@ class TikTokAutomator:
         return False
 
     def _close_comment_sidebar(self):
-        """Closes the comment sidebar if it's open, using multiple locators for robustness."""
+        """Closes the comment sidebar if it's open."""
         if not self.is_comment_sidebar_open:
             return
         logging.info("Attempting to close comment sidebar...")
-        
-        close_locators = [
-            (By.XPATH, "//button[@aria-label='exit']"),
-            (By.XPATH, "//*[@id='main-content-homepage_hot']/aside/div[2]/section/div[1]/div[2]/div/button"),
-            (By.CSS_SELECTOR, "#main-content-homepage_hot > aside > div.css-11k7ru5-DivCommentSidebarTransitionWrapper.e5nqjkm1.comment-sidebar-transition-enter-done > section > div.css-40y68m-DivCommentHeader.ejc82cd1 > div.css-javuk6-DivCloseButtonWrapper.ejc82cd5 > div > button"),
-            (By.XPATH, "//button[@aria-label='Close']") # Original fallback
-        ]
-
-        for by, value in close_locators:
-            try:
-                logging.debug(f"Trying to find close button with: {by}={value}")
-                close_button = self._safe_find_element(by, value, timeout=2)
-                if self._safe_click(close_button, "comment sidebar close button"):
-                    self.is_comment_sidebar_open = False
-                    time.sleep(1) # Wait for animation
-                    return
-            except Exception:
-                continue
-        
-        logging.warning("Could not close comment sidebar using any known locator. Assuming it will close on its own.")
-        self.is_comment_sidebar_open = False # Assume it's closed to avoid getting stuck
+        try:
+            close_button = self._safe_find_element(By.XPATH, "//button[@aria-label='Close']", timeout=3)
+            if self._safe_click(close_button, "comment sidebar close button"):
+                self.is_comment_sidebar_open = False
+                time.sleep(1) # Wait for animation
+        except Exception as e:
+            logging.warning(f"Could not close comment sidebar, it might close on its own: {e}")
+            self.is_comment_sidebar_open = False # Assume it's closed to avoid getting stuck
 
     def _humanize_comment(self, text):
         """Applies misspellings and slang to a comment to make it appear more human."""
@@ -272,8 +259,8 @@ class TikTokAutomator:
             return True
         return False
 
-    def _navigate_to_next_video(self, current_article_count):
-        """Navigates to the next video and waits for it to load."""
+    def _navigate_to_next_video(self, article_index):
+        """Navigates to the next video and waits for the new video element to appear."""
         logging.info("Scrolling to next video...")
         
         try:
@@ -282,19 +269,22 @@ class TikTokAutomator:
         except Exception as e:
             logging.warning(f"Could not click body to reset focus: {e}")
 
-        def new_video_has_loaded(driver):
-            new_count = len(driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
-            return new_count > current_article_count
-
+        # The XPath for the *next* video we expect to see
+        next_video_xpath = f'//*[@id="column-list-container"]/article[{article_index + 1}]'
+        
         scroll_methods = [
             lambda: self.driver.execute_script("window.scrollBy(0, window.innerHeight);"),
             lambda: self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
         ]
+
         for i, scroll_method in enumerate(scroll_methods):
             try:
                 logging.debug(f"Attempting scroll method #{i+1}...")
                 scroll_method()
-                WebDriverWait(self.driver, 7).until(new_video_has_loaded)
+                # Explicitly wait for the NEXT article element to be present in the DOM
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.XPATH, next_video_xpath))
+                )
                 logging.info("New video loaded successfully.")
                 return True
             except Exception as e:
@@ -309,8 +299,7 @@ class TikTokAutomator:
             self._setup_driver()
             self.driver.get("https://www.tiktok.com")
             
-            # This is now just a waiting signal, no user input here.
-            logging.info("Browser opened. Waiting for the master 'go' signal...")
+            logging.info("Browser opened. Waiting for the user to press ENTER in the main console...")
             start_event.wait()
             logging.info("Go signal received! Starting automation.")
             self._navigate_to_fyp()
@@ -318,12 +307,12 @@ class TikTokAutomator:
             article_num = 1
             while True:
                 logging.info(f"--- Processing video in article {article_num} ---")
-                time.sleep(random.uniform(0.7, 1.5))
                 
                 try:
+                    # Wait for the current video to be ready before interacting
                     WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
                 except TimeoutException:
-                    logging.error("Timed out waiting for next video article to load. Stopping.")
+                    logging.error("Timed out waiting for current video article to load. Stopping.")
                     break
 
                 liked = self._like_current_video(article_index=article_num)
@@ -335,11 +324,10 @@ class TikTokAutomator:
                     if self._open_comment_sidebar(article_num):
                         self._process_comment_input_and_post()
                 
-                if liked or self.is_comment_sidebar_open is False: # Check if interacted or sidebar is closed
+                if liked or not self.is_comment_sidebar_open:
                     time.sleep(random.uniform(*self.config['DELAY_BETWEEN_ACTIONS']))
 
-                current_article_count = len(self.driver.find_elements(By.XPATH, "//*[@id='column-list-container']/article"))
-                if not self._navigate_to_next_video(current_article_count):
+                if not self._navigate_to_next_video(article_num):
                     break
                 article_num += 1
 
@@ -407,7 +395,6 @@ if __name__ == "__main__":
         thread.start()
         time.sleep(3)
     
-    # This is now the one and only prompt for the user
     if not run_headless:
         print("\n" + "="*80 + "\nAll browsers launched. Please log in to each account.\n" + "="*80)
         input("Once logged in to ALL accounts, press ENTER here to start all bots...")
