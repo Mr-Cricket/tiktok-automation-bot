@@ -45,11 +45,13 @@ It's best practice to create a virtual environment to keep project dependencies 
 * On Windows:
 
 `python -m venv venv`
+
 `venv\Scripts\activate`
 
 * On macOS & Linux:
 
 `python3 -m venv venv`
+
 `source venv/bin/activate`
 
 **3. Install Required Packages:**
