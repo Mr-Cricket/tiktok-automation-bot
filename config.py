@@ -26,6 +26,10 @@ AD_OPENERS = [
     "If you're looking for more content on",
     "For those who want to go deeper into",
     "A bit off-topic, but if you're fascinated by",
+    "Good to see people still talking about",
+    "For those who know what's really going on with",
+    "If you're tired of the mainstream narrative on",
+    "Based take. If you're interested in",
 ]
 
 CALL_TO_ACTIONS = [
@@ -42,18 +46,43 @@ CALL_TO_ACTIONS = [
     "topics like this, we're building a community you might enjoy.",
     "European history and current events, our server is active 24/7.",
     "anthropology and cultural studies, feel free to check out our group.",
+    "real solutions for Europe's future, we're discussing them here.",
+    "saving Europe, our community is a good place to start.",
+    "preserving our heritage, we're organizing here.",
+    "building a network of like-minded people, you know where to find us.",
+    "the future of Europa, we're planning it here.",
+    "traditional European values, we have a server for that.",
 ]
 
 EMOJIS = [
     "🤓", "🤯", "😮", "👍", "💯", "🔥", "🌍", "📜", "🧐", "➡️", "" # Added an empty string for no emoji
 ]
 
+# --- Humanizer Engine ---
+# This engine makes the comments appear more authentic.
+
+# Specific, intentional misspellings and slang.
+HUMANIZER_TWEAKS = {
+    "you": ["yuo", "you"], # Will sometimes replace "you" with "yuo"
+    "sir": ["saar"],
+    "bro": ["vro"],
+    "Europe": ["Europa", "Europe"],
+}
+
+# Slang phrases that can be randomly added to the beginning or end of a comment.
+SLANG_ADDITIONS = [
+    "W server.",
+    "Based server.",
+    "Good community here.",
+    "Finally, a good server.",
+    "", # An empty string means sometimes no slang is added.
+    "",
+    ""
+]
+
 
 # The delay range (in seconds) to wait after a successful interaction.
 DELAY_BETWEEN_ACTIONS = (2.5, 5.0)
-
-# Set to True to run the browser in headless mode (no visible UI).
-RUN_HEADLESS = False
 
 # The name of the file where comment logs will be stored.
 COMMENT_LOG_FILE = "tiktok_comments.txt"
