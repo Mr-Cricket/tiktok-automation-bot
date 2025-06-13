@@ -79,17 +79,13 @@ Execute the `main.py` script from your terminal.
 
 > `python main.py`
 
-**3. First-Time Login:**
+The script will now ask you to choose a run mode:
 
-* The script will first ask you how many accounts you want to run.
+* **Choose `1` for Setup Mode**: Use this for the **first time** you run any new account. It will open a visible browser window, allowing you to log in manually. The bot will save your session for future runs.
 
-* It will then launch a separate Chrome window for each account.
+* **Choose `2` for Headless Mode**: Use this for **all subsequent runs**. The bot will use your saved login and run completely invisibly in the background, which is the recommended way to operate.
 
-* **You must manually log in to each TikTok account in its respective browser window.**
-
-* Once all accounts are logged in, go back to the terminal and press `Enter` to start all the bots.
-
-**4. Stopping the Bot:**
+**3. Stopping the Bot:**
 
 To stop all running bots, simply go to the terminal window where the script is running and press `Ctrl+C`.
 
