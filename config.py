@@ -54,10 +54,11 @@ CALL_TO_ACTIONS = [
     "traditional European values, we have a server for that.",
 ]
 
-# EMOJI list updated with only the "safest" characters to prevent crashes.
+# A list of "safe" emojis that are highly compatible.
 EMOJIS = [
-    "👍", "➡️", "😮", "💯", "" # Added an empty string for no emoji
+    "👍", "➡️", "😮", "💯", "🔥", "🌍", "📜", "🧐", "" # An empty string for no emoji
 ]
+
 
 # --- Humanizer Engine ---
 # This engine makes the comments appear more authentic.
