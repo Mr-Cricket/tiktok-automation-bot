@@ -54,7 +54,7 @@ class TikTokAutomator:
         try:
             return self.wait.until(EC.visibility_of_element_located((by, value)))
         except (TimeoutException, NoSuchElementException):
-            logging.warning(f"Element not found within {timeout}s: {by}={value}")
+            logging.debug(f"Element not found within {timeout}s: {by}={value}")
             return None
 
     def _safe_click(self, element, description="element"):
@@ -77,6 +77,25 @@ class TikTokAutomator:
             except Exception as js_e:
                 logging.error(f"JavaScript click also failed for {description}: {js_e}")
                 return False
+
+    def _check_login_status(self, timeout=15):
+        """Checks if the user is logged in by looking for multiple indicators."""
+        logging.info("Verifying login status...")
+        # Method 1: Look for the user's profile picture avatar (most reliable)
+        profile_icon = self._safe_find_element(By.CSS_SELECTOR, "[data-e2e='nav-avatar']", timeout)
+        if profile_icon:
+            logging.info("Login verified successfully (found profile avatar).")
+            return True
+
+        # Method 2: Look for the "Upload" button as a fallback
+        logging.info("Profile avatar not found, checking for 'Upload' button as a fallback...")
+        upload_button = self._safe_find_element(By.XPATH, "//a[@href='/upload']", 5)
+        if upload_button:
+            logging.info("Login verified successfully (found 'Upload' button).")
+            return True
+
+        logging.error("Login verification failed. Neither profile avatar nor upload button were found.")
+        return False
 
     def _navigate_to_fyp(self):
         """Finds and clicks the 'For You' page button."""
@@ -123,6 +142,20 @@ class TikTokAutomator:
             logging.info(f"Logged comment action.")
         except IOError as e:
             logging.error(f"Could not write to log file: {e}")
+
+    def _check_if_sponsored(self, article_index):
+        """Checks if the current video is a sponsored post or ad."""
+        logging.info("Checking if video is sponsored...")
+        try:
+            sponsored_xpath = f"//*[@id='column-list-container']/article[{article_index}]//*[contains(translate(., 'SPONRED', 'sponred'), 'sponsored') or @data-e2e='ad-badge']"
+            ad_element = self._safe_find_element(By.XPATH, sponsored_xpath, timeout=1)
+            if ad_element:
+                logging.warning("Sponsored video/ad detected. Skipping.")
+                return True
+        except Exception as e:
+            logging.error(f"Error while checking for sponsored video: {e}")
+        logging.info("Video is not an ad.")
+        return False
 
     def _check_if_comments_disabled(self, article_index):
         """Checks if the comment section for the current video is disabled."""
@@ -199,7 +232,14 @@ class TikTokAutomator:
             time.sleep(random.uniform(0.02, 0.08))
     
     def _process_comment_input_and_post(self):
-        """Builds, validates, and posts a comment, with error handling for emojis."""
+        """Builds, validates, and posts a comment, handling pop-ups and errors."""
+        try:
+            logging.debug("Sending ESCAPE key to dismiss potential overlays.")
+            self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+            time.sleep(0.5)
+        except Exception as e:
+            logging.warning(f"Could not send ESCAPE key (this is often okay): {e}")
+
         comment_area = self._safe_find_element(By.CSS_SELECTOR, 'div[contenteditable="true"]')
         if not comment_area: return False
         self._safe_click(comment_area, "comment input area")
@@ -216,7 +256,7 @@ class TikTokAutomator:
             humanized_comment = self._humanize_comment(base_comment)
             
             slang = random.choice(self.config['SLANG_ADDITIONS'])
-            emoji = random.choice(self.config['EMOJIS'])
+            emoji = random.choice(self.config.get('EMOJIS', [""]))
             
             comment_without_emoji = humanized_comment
             if slang:
@@ -255,7 +295,7 @@ class TikTokAutomator:
             self._log_comment_action(final_comment)
             logging.info("Comment posted successfully.")
             time.sleep(1.2)
-            self._close_comment_sidebar() # Close sidebar after successful post
+            self._close_comment_sidebar()
             return True
         return False
 
@@ -269,7 +309,6 @@ class TikTokAutomator:
         except Exception as e:
             logging.warning(f"Could not click body to reset focus: {e}")
 
-        # The XPath for the *next* video we expect to see
         next_video_xpath = f'//*[@id="column-list-container"]/article[{article_index + 1}]'
         
         scroll_methods = [
@@ -281,10 +320,7 @@ class TikTokAutomator:
             try:
                 logging.debug(f"Attempting scroll method #{i+1}...")
                 scroll_method()
-                # Explicitly wait for the NEXT article element to be present in the DOM
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.XPATH, next_video_xpath))
-                )
+                WebDriverWait(self.driver, 15).until(EC.presence_of_element_located((By.XPATH, next_video_xpath)))
                 logging.info("New video loaded successfully.")
                 return True
             except Exception as e:
@@ -299,7 +335,15 @@ class TikTokAutomator:
             self._setup_driver()
             self.driver.get("https://www.tiktok.com")
             
-            logging.info("Browser opened. Waiting for the user to press ENTER in the main console...")
+            # New: Check login status right after loading the page
+            if not self._check_login_status():
+                if self.headless:
+                    logging.critical("Headless login failed. Please run in Setup Mode (Choice 1) to refresh your login session.")
+                    return # Exit this thread
+                else:
+                    logging.info("Please log in to save your session.")
+                    input(f"[{threading.current_thread().name}] After logging in, press ENTER in the main console to continue...")
+            
             start_event.wait()
             logging.info("Go signal received! Starting automation.")
             self._navigate_to_fyp()
@@ -309,11 +353,16 @@ class TikTokAutomator:
                 logging.info(f"--- Processing video in article {article_num} ---")
                 
                 try:
-                    # Wait for the current video to be ready before interacting
                     WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, f'//*[@id="column-list-container"]/article[{article_num}]')))
                 except TimeoutException:
                     logging.error("Timed out waiting for current video article to load. Stopping.")
                     break
+
+                if self._check_if_sponsored(article_index=article_num):
+                    if not self._navigate_to_next_video(article_num):
+                        break
+                    article_num += 1
+                    continue
 
                 liked = self._like_current_video(article_index=article_num)
                 if liked: time.sleep(random.uniform(0.4, 0.8))
@@ -358,6 +407,8 @@ if __name__ == "__main__":
         'DELAY_BETWEEN_ACTIONS': DELAY_BETWEEN_ACTIONS, 
         'COMMENT_LOG_FILE': COMMENT_LOG_FILE
     }
+    if 'EMOJIS' not in globals():
+        bot_config['EMOJIS'] = [""] # Ensure EMOJIS key exists even if empty in config
 
     print("--- TikTok Automation Bot ---")
     print("Select a run mode:")
@@ -395,6 +446,7 @@ if __name__ == "__main__":
         thread.start()
         time.sleep(3)
     
+    # This is now the one and only prompt for the user
     if not run_headless:
         print("\n" + "="*80 + "\nAll browsers launched. Please log in to each account.\n" + "="*80)
         input("Once logged in to ALL accounts, press ENTER here to start all bots...")
